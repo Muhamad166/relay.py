@@ -6,11 +6,11 @@ import uuid
 
 PORT = int(os.environ.get("PORT", 10000))
 
-clients = {}  # client_id -> {"ws": websocket, "name": str}
+clients = {}  # client_id -> {"ws": websocket, "name": str, "in_call": False}
 
 async def broadcast_user_list():
     users = [
-        {"id": cid, "name": info["name"]}
+        {"id": cid, "name": info["name"], "in_call": info["in_call"]}
         for cid, info in clients.items()
     ]
     msg = json.dumps({"type": "users", "users": users})
@@ -35,7 +35,7 @@ async def handler(ws, path):
             return
 
         name = join["name"]
-        clients[client_id] = {"ws": ws, "name": name}
+        clients[client_id] = {"ws": ws, "name": name, "in_call": False}
         print(f"{name} joined as {client_id}")
 
         # أرسل له الـ id تبعه
@@ -61,7 +61,7 @@ async def handler(ws, path):
             if t == "message":
                 to_id = data.get("to")
                 text = data.get("text", "")
-                if to_id and to_id in clients:
+                if to_id in clients:
                     await send_to(to_id, {
                         "type": "message",
                         "from": client_id,
@@ -72,7 +72,7 @@ async def handler(ws, path):
             # طلب مكالمة
             elif t == "call_request":
                 to_id = data.get("to")
-                if to_id and to_id in clients:
+                if to_id in clients:
                     await send_to(to_id, {
                         "type": "call_request",
                         "from": client_id,
@@ -82,17 +82,20 @@ async def handler(ws, path):
             # قبول مكالمة
             elif t == "call_accept":
                 to_id = data.get("to")
-                if to_id and to_id in clients:
+                if to_id in clients:
+                    clients[client_id]["in_call"] = True
+                    clients[to_id]["in_call"] = True
                     await send_to(to_id, {
                         "type": "call_accept",
                         "from": client_id,
                         "from_name": name
                     })
+                    await broadcast_user_list()
 
             # رفض مكالمة
             elif t == "call_reject":
                 to_id = data.get("to")
-                if to_id and to_id in clients:
+                if to_id in clients:
                     await send_to(to_id, {
                         "type": "call_reject",
                         "from": client_id,
@@ -102,12 +105,15 @@ async def handler(ws, path):
             # إنهاء مكالمة
             elif t == "call_end":
                 to_id = data.get("to")
-                if to_id and to_id in clients:
+                if to_id in clients:
+                    clients[client_id]["in_call"] = False
+                    clients[to_id]["in_call"] = False
                     await send_to(to_id, {
                         "type": "call_end",
                         "from": client_id,
                         "from_name": name
                     })
+                    await broadcast_user_list()
 
     finally:
         if client_id in clients:
